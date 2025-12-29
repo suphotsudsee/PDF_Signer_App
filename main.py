@@ -1,10 +1,11 @@
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk, ImageDraw, ImageFont
+from datetime import date
 import io
 import os
 import sys
-import fitz  # PyMuPDF
+import fitz  # pymupdf
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.lib.pagesizes import A4
@@ -26,12 +27,12 @@ FONT_NAME = 'THSarabunNew'
 class DocumentSignerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("โปรแกรมลงนามเอกสาร (Final Fixed)")
+        self.root.title("โปรแกรมลงนามเอกสาร (Fix Invisible Signature)")
         self.root.geometry("1100x800")
 
         # ตัวแปรระบบ
         self.input_path = None
-        self.input_type = None  # 'pdf' or 'image'
+        self.input_type = None
         self.sign_img_path = None
         self.processed_sign_img = None
         
@@ -39,7 +40,7 @@ class DocumentSignerApp:
         self.preview_scale = 1.0
         self.tk_bg_image = None   
         self.tk_sign_image = None 
-        self.real_img_size = (0, 0) 
+        self.real_img_size = (0, 0) # ขนาดของภาพที่ใช้แสดงผล (Preview base size)
 
         self.setup_ui()
 
@@ -64,7 +65,7 @@ class DocumentSignerApp:
         # 3. วันที่
         tk.Label(control_frame, text="3. วันที่กำกับ", bg="#f0f0f0", font=("Arial", 10, "bold")).pack(anchor="w")
         self.entry_date = tk.Entry(control_frame, font=("Arial", 12))
-        self.entry_date.insert(0, "26 ธันวาคม 2568")
+        self.entry_date.insert(0, self.get_current_date_text())
         self.entry_date.pack(fill=tk.X, pady=5)
         self.entry_date.bind("<KeyRelease>", self.update_preview_text)
 
@@ -73,7 +74,7 @@ class DocumentSignerApp:
                                   bg="#007bff", fg="white", font=("Arial", 12, "bold"), state="disabled")
         self.btn_save.pack(side=tk.BOTTOM, fill=tk.X, pady=20)
         
-        tk.Label(control_frame, text="วิธีใช้: ลากลายเซ็นไปวางบนภาพ\n(โชว์หน้าแรกของ PDF)", bg="#f0f0f0", fg="#d9534f").pack(side=tk.BOTTOM)
+        tk.Label(control_frame, text="วิธีใช้: ลากลายเซ็นไปวางบนภาพ", bg="#f0f0f0", fg="#d9534f").pack(side=tk.BOTTOM)
 
         # --- Panel ขวา (Canvas) ---
         preview_frame = tk.Frame(self.root, bg="#333333")
@@ -140,39 +141,37 @@ class DocumentSignerApp:
         if self.input_path and self.sign_img_path:
             self.btn_save.config(state="normal")
 
-    # --- Preview Logic (FIXED) ---
-    
+    def get_current_date_text(self):
+        thai_months = [
+            "มกราคม", "กุมภาพันธ์", "มีนาคม", "เมษายน", "พฤษภาคม", "มิถุนายน",
+            "กรกฎาคม", "สิงหาคม", "กันยายน", "ตุลาคม", "พฤศจิกายน", "ธันวาคม"
+        ]
+        today = date.today()
+        return f"{today.day} {thai_months[today.month - 1]} {today.year + 543}"
+
     def load_preview_background(self):
         self.canvas.delete("all") 
-        
         target_img = None
 
         if self.input_type == 'image':
-            # เปิดไฟล์รูปปกติ
             target_img = Image.open(self.input_path)
             
         elif self.input_type == 'pdf':
-            # --- ส่วนที่แก้ไข (FIXED): ใช้ pix.samples แทน pix.tobytes ---
             try:
                 doc = fitz.open(self.input_path)
-                page = doc.load_page(0) # โหลดหน้าแรก
+                page = doc.load_page(0)
+                # ใช้ DPI สูงเพื่อให้ Preview ชัด (แต่นี่คือสาเหตุที่พิกัดเพี้ยนถ้าไม่หารกลับ)
                 pix = page.get_pixmap(dpi=150)
-                
-                # ตรวจสอบว่าเป็น RGBA หรือ RGB
                 mode = "RGBA" if pix.alpha else "RGB"
-                
-                # ใช้ pix.samples เพื่อดึงข้อมูลดิบ
                 target_img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
-                
             except Exception as e:
                 messagebox.showerror("Error", f"อ่าน PDF ไม่ได้: {e}")
                 return
-            # ---------------------------------------------
 
         if target_img:
-            self.real_img_size = target_img.size
+            self.real_img_size = target_img.size # เก็บขนาดจริงของภาพ Preview ไว้คำนวณสัดส่วน
             
-            # คำนวณ Scale
+            # คำนวณ Scale สำหรับแสดงผลบนจอ (Display Scale)
             max_preview_h = 800
             self.preview_scale = 1.0
             if target_img.size[1] > max_preview_h:
@@ -202,7 +201,6 @@ class DocumentSignerApp:
         
         self.tk_sign_image = ImageTk.PhotoImage(img_resized)
         
-        # วางกลาง Viewport
         start_x = 200
         start_y = 200
         
@@ -228,7 +226,8 @@ class DocumentSignerApp:
         self.drag_data["x"] = cur_x
         self.drag_data["y"] = cur_y
 
-    def get_signature_position(self):
+    def get_signature_position_on_preview_image(self):
+        """ หาตำแหน่งบนภาพ Preview (หน่วยพิกเซลของภาพ Preview) """
         items = self.canvas.find_withtag("movable")
         img_item = None
         for item in items:
@@ -238,6 +237,8 @@ class DocumentSignerApp:
         
         if not img_item: return (0, 0)
         c_x, c_y = self.canvas.coords(img_item)
+        
+        # หารด้วย Preview Scale เพื่อกลับไปเป็นพิกเซลของภาพที่โหลดมา
         real_x = c_x / self.preview_scale
         real_y = c_y / self.preview_scale
         return real_x, real_y
@@ -252,6 +253,10 @@ class DocumentSignerApp:
         output_path = filedialog.asksaveasfilename(defaultextension=".jpg", filetypes=[("JPEG", "*.jpg"), ("PNG", "*.png")])
         if not output_path: return
         try:
+            if self.input_type == 'pdf':
+                messagebox.showerror("Error", "ขออภัย: ไม่รองรับการแปลง PDF เป็นรูปภาพ (ให้เลือกไฟล์ต้นฉบับที่เป็นรูปภาพเท่านั้น)")
+                return
+
             base_img = Image.open(self.input_path).convert("RGB")
             draw = ImageDraw.Draw(base_img)
             
@@ -262,7 +267,9 @@ class DocumentSignerApp:
             except:
                 font = ImageFont.load_default()
 
-            real_x, real_y = self.get_signature_position()
+            real_x, real_y = self.get_signature_position_on_preview_image()
+            
+            # กรณีรูปภาพ: real_x/real_y ตรงกับ pixel จริงแล้ว ใช้ได้เลย
             
             sig_w = int(base_img.size[0] * 0.15) 
             w_percent = (sig_w / float(self.processed_sign_img.size[0]))
@@ -294,20 +301,34 @@ class DocumentSignerApp:
         output_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF", "*.pdf")])
         if not output_path: return
         try:
-            real_x, real_y = self.get_signature_position()
+            # 1. ได้พิกัดบน "ภาพ Preview (150 DPI)"
+            preview_x, preview_y = self.get_signature_position_on_preview_image()
             
+            # 2. อ่านขนาดหน้ากระดาษ PDF จริง (72 DPI)
             doc = fitz.open(self.input_path)
             page = doc.load_page(0)
-            pdf_h = page.rect.height
-            real_y_pdf = pdf_h - real_y
+            pdf_w_pt = page.rect.width
+            pdf_h_pt = page.rect.height
+            
+            # 3. คำนวณอัตราส่วน (Ratio) ระหว่าง ภาพ Preview กับ PDF จริง
+            # self.real_img_size คือขนาดของภาพ Preview ที่โหลดมา
+            ratio_x = pdf_w_pt / self.real_img_size[0]
+            ratio_y = pdf_h_pt / self.real_img_size[1]
+            
+            # 4. แปลงพิกัดจาก Preview -> PDF Point
+            final_x = preview_x * ratio_x
+            final_y_from_top = preview_y * ratio_y
+            
+            # 5. กลับด้านแกน Y (เพราะ PDF นับ 0,0 จากล่างซ้าย)
+            final_y_pdf = pdf_h_pt - final_y_from_top
 
+            # --- เริ่มสร้าง Watermark ---
             packet = io.BytesIO()
-            # ใช้ขนาดหน้ากระดาษตาม PDF จริง
-            can = pdf_canvas.Canvas(packet, pagesize=(page.rect.width, page.rect.height))
+            can = pdf_canvas.Canvas(packet, pagesize=(pdf_w_pt, pdf_h_pt))
             
             try:
                 pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
-                can.setFont(FONT_NAME, 16)
+                can.setFont(FONT_NAME, 16) # ขนาดฟอนต์อาจต้องปรับตาม Ratio ถ้าต้องการความแม่นยำสูง
             except:
                 can.setFont("Helvetica", 14)
 
@@ -315,20 +336,26 @@ class DocumentSignerApp:
             text_date = self.entry_date.get()
             
             can.setFillColorRGB(0, 0, 1) 
-            can.drawCentredString(real_x, real_y_pdf + 40, text_top)
+            # วาดข้อความบน
+            can.drawCentredString(final_x, final_y_pdf + 30, text_top)
             
+            # วาดรูป
             img_buffer = io.BytesIO()
             self.processed_sign_img.save(img_buffer, format='PNG')
             img_buffer.seek(0)
             rl_image = ImageReader(img_buffer)
             
-            sig_w = 100
+            sig_w = 100 # ขนาดกว้างลายเซ็นใน PDF (points)
             sig_h = 40
-            can.drawImage(rl_image, real_x - (sig_w/2), real_y_pdf - (sig_h/2), width=sig_w, height=sig_h, mask='auto')
-            can.drawCentredString(real_x, real_y_pdf - 25, text_date)
+            can.drawImage(rl_image, final_x - (sig_w/2), final_y_pdf - (sig_h/2), width=sig_w, height=sig_h, mask='auto')
+            
+            # วาดข้อความล่าง
+            can.drawCentredString(final_x, final_y_pdf - 20, text_date)
+            
             can.save()
             packet.seek(0)
 
+            # Merge
             watermark = PdfReader(packet)
             watermark_page = watermark.pages[0]
             reader = PdfReader(self.input_path)
@@ -343,6 +370,7 @@ class DocumentSignerApp:
             
             messagebox.showinfo("สำเร็จ", "บันทึกไฟล์ PDF เรียบร้อย!")
             os.startfile(os.path.dirname(output_path))
+
         except Exception as e:
             messagebox.showerror("Error", str(e))
 
