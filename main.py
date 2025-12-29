@@ -4,7 +4,7 @@ from PIL import Image, ImageTk, ImageDraw, ImageFont
 import io
 import os
 import sys
-import fitz  # <--- พระเอกคนใหม่ (PyMuPDF)
+import fitz  # PyMuPDF
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas as pdf_canvas
 from reportlab.lib.pagesizes import A4
@@ -26,7 +26,7 @@ FONT_NAME = 'THSarabunNew'
 class DocumentSignerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("โปรแกรมลงนามเอกสาร (Real Preview)")
+        self.root.title("โปรแกรมลงนามเอกสาร (Final Fixed)")
         self.root.geometry("1100x800")
 
         # ตัวแปรระบบ
@@ -140,7 +140,7 @@ class DocumentSignerApp:
         if self.input_path and self.sign_img_path:
             self.btn_save.config(state="normal")
 
-    # --- Preview Logic (Updated) ---
+    # --- Preview Logic (FIXED) ---
     
     def load_preview_background(self):
         self.canvas.delete("all") 
@@ -152,16 +152,18 @@ class DocumentSignerApp:
             target_img = Image.open(self.input_path)
             
         elif self.input_type == 'pdf':
-            # --- ส่วนที่เพิ่มมา: แปลง PDF เป็นรูปภาพเพื่อโชว์ ---
+            # --- ส่วนที่แก้ไข (FIXED): ใช้ pix.samples แทน pix.tobytes ---
             try:
                 doc = fitz.open(self.input_path)
                 page = doc.load_page(0) # โหลดหน้าแรก
-                pix = page.get_pixmap(dpi=150) # แปลงเป็น Pixmap (ความชัด dpi=150)
+                pix = page.get_pixmap(dpi=150)
                 
-                # แปลง Pixmap -> PIL Image
+                # ตรวจสอบว่าเป็น RGBA หรือ RGB
                 mode = "RGBA" if pix.alpha else "RGB"
-                img_data = pix.tobytes(mode)
-                target_img = Image.frombytes(mode, [pix.width, pix.height], img_data)
+                
+                # ใช้ pix.samples เพื่อดึงข้อมูลดิบ
+                target_img = Image.frombytes(mode, [pix.width, pix.height], pix.samples)
+                
             except Exception as e:
                 messagebox.showerror("Error", f"อ่าน PDF ไม่ได้: {e}")
                 return
@@ -170,7 +172,7 @@ class DocumentSignerApp:
         if target_img:
             self.real_img_size = target_img.size
             
-            # คำนวณ Scale ไม่ให้ล้นจอ (เอาสูง max 800px)
+            # คำนวณ Scale
             max_preview_h = 800
             self.preview_scale = 1.0
             if target_img.size[1] > max_preview_h:
@@ -200,7 +202,7 @@ class DocumentSignerApp:
         
         self.tk_sign_image = ImageTk.PhotoImage(img_resized)
         
-        # วางกลาง Canvas (หรือกลาง Viewport)
+        # วางกลาง Viewport
         start_x = 200
         start_y = 200
         
@@ -294,19 +296,13 @@ class DocumentSignerApp:
         try:
             real_x, real_y = self.get_signature_position()
             
-            # --- ส่วนที่ต้องระวังในการแปลง Scale ---
-            # real_x, real_y คือพิกัดบนรูป PDF ที่เราแปลงมาโชว์
-            # แต่ PDF จริงอาจมีขนาด (MediaBox) ต่างจากที่เราเห็นนิดหน่อยถ้า DPI ต่างกัน
-            # แต่ logic นี้ใช้ได้ดีกับ A4 มาตรฐาน
-            
             doc = fitz.open(self.input_path)
             page = doc.load_page(0)
             pdf_h = page.rect.height
-            # PDF Coordinate (0,0 is bottom-left)
-            # Image Coordinate (0,0 is top-left)
             real_y_pdf = pdf_h - real_y
 
             packet = io.BytesIO()
+            # ใช้ขนาดหน้ากระดาษตาม PDF จริง
             can = pdf_canvas.Canvas(packet, pagesize=(page.rect.width, page.rect.height))
             
             try:
